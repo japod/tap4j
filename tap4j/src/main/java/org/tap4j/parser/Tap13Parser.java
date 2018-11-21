@@ -32,6 +32,7 @@ import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.UnsupportedCharsetException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Stack;
@@ -89,6 +90,13 @@ public class Tap13Parser implements Parser {
     private boolean planRequired = true;
 
     /**
+     * Remove corrupted YAML. YAML parser error should not cause TAP parser error.
+     * The content that failed to be parsed as YAML will be just removed from the TAP diagnostic data.
+     * Switched off by default.
+     */
+    private boolean removeYamlIfCorrupted = false;
+
+    /**
      * Parser Constructor.
      *
      * A parser constructed this way will enforce that any input should include
@@ -115,6 +123,21 @@ public class Tap13Parser implements Parser {
      * @param planRequired flag that defines whether a plan is required or not
      */
     public Tap13Parser(String encoding, boolean enableSubtests, boolean planRequired) {
+        this(encoding, enableSubtests, planRequired, false);
+    }
+
+    /**
+     * Parser Constructor.
+     *
+     * @param encoding Encoding. This will not matter when parsing sources that
+     * are already decoded (e.g. {@link String} or {@link Readable}), but it
+     * will be used in the {@link #parseFile} method (whether or not it is the
+     * right encoding for the File being parsed).
+     * @param enableSubtests Whether subtests are enabled or not
+     * @param planRequired flag that defines whether a plan is required or not
+     * @param removeYamlIfCorrupted flag that defines whether a corrupted YAML content will be removed without causing whole TAP processing failure
+     */
+    public Tap13Parser(String encoding, boolean enableSubtests, boolean planRequired, boolean removeYamlIfCorrupted) {
         super();
         /*
          * Resolving the encoding name to a CharsetDecoder here has two
@@ -133,6 +156,7 @@ public class Tap13Parser implements Parser {
             throw new ParserException("Invalid encoding: " + encoding, uce);
         }
         this.planRequired = planRequired;
+        this.removeYamlIfCorrupted = removeYamlIfCorrupted;
     }
 
     /**
@@ -433,9 +457,15 @@ public class Tap13Parser implements Parser {
                         .load(state.getDiagnosticBuffer().toString());
                 state.getLastParsedElement().setDiagnostic(metaIterable);
             } catch (Exception ex) {
-                throw new ParserException("Error parsing YAML ["
-                        + state.getDiagnosticBuffer().toString() + "]: "
-                        + ex.getMessage(), ex);
+                if (this.removeYamlIfCorrupted) {
+                    Map<String, Object> metaInfo = new HashMap<String, Object>();
+                    metaInfo.put("TAP processing error", "could not parse original diagnostic YAML data");
+                    state.getLastParsedElement().setDiagnostic(metaInfo);
+                } else {
+                    throw new ParserException("Error parsing YAML ["
+                            + state.getDiagnosticBuffer().toString() + "]: "
+                            + ex.getMessage(), ex);
+                }
             }
             this.state.getDiagnosticBuffer().setLength(0);
         }
